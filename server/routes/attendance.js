@@ -1,155 +1,141 @@
 const express = require('express');
-const { db } = require('../database');
+const { pool } = require('../database'); // Usando MySQL pool
 const authenticateToken = require('../middleware/auth');
 
 const router = express.Router();
 
 // Registrar asistencia
-router.post('/', authenticateToken, (req, res) => {
-  const { teacher_id, fecha, hora_entrada, hora_salida, estado, observaciones } = req.body;
-
-  if (!teacher_id || !fecha) {
+router.post('/', authenticateToken, async (req, res) => {
+  const { teacher_id, date, entry_time, exit_time, estado, observaciones } = req.body;
+  if (!teacher_id || !date) {
     return res.status(400).json({ error: 'ID de docente y fecha son requeridos' });
   }
-
-  const query = `
-    INSERT INTO attendance (teacher_id, fecha, hora_entrada, hora_salida, estado, observaciones)
-    VALUES (?, ?, ?, ?, ?, ?)
-  `;
-
-  db.run(query, [teacher_id, fecha, hora_entrada, hora_salida, estado || 'presente', observaciones], function(err) {
-    if (err) {
-      if (err.message.includes('UNIQUE')) {
-        return res.status(400).json({ error: 'Ya existe un registro de asistencia para este docente en esta fecha' });
-      }
-      return res.status(500).json({ error: 'Error al registrar asistencia' });
+  try {
+    const [result] = await pool.query(
+      `INSERT INTO attendance (teacher_id, date, entry_time, exit_time, entry_status, exit_status, notes)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [teacher_id, date, entry_time, exit_time, estado || 'presente', estado || 'salida', observaciones]
+    );
+    res.status(201).json({ id: result.insertId, message: 'Asistencia registrada exitosamente' });
+  } catch (err) {
+    if (err.code === 'ER_DUP_ENTRY') {
+      return res.status(400).json({ error: 'Ya existe un registro de asistencia para este docente en esta fecha' });
     }
-    res.status(201).json({ id: this.lastID, message: 'Asistencia registrada exitosamente' });
-  });
+    res.status(500).json({ error: 'Error al registrar asistencia' });
+  }
 });
 
 // Obtener asistencias con filtros
-router.get('/', authenticateToken, (req, res) => {
-  const { fecha, teacher_id, fecha_inicio, fecha_fin } = req.query;
-  
+router.get('/', authenticateToken, async (req, res) => {
+  const { date, teacher_id, date_start, date_end } = req.query;
   let query = `
-    SELECT a.*, t.nombre, t.apellido, t.dni, t.especialidad
+    SELECT a.*, t.first_name, t.last_name, t.dni, t.email
     FROM attendance a
     JOIN teachers t ON a.teacher_id = t.id
     WHERE 1=1
   `;
   const params = [];
-
-  if (fecha) {
-    query += ' AND a.fecha = ?';
-    params.push(fecha);
+  if (date) {
+    query += ' AND a.date = ?';
+    params.push(date);
   }
-
   if (teacher_id) {
     query += ' AND a.teacher_id = ?';
     params.push(teacher_id);
   }
-
-  if (fecha_inicio && fecha_fin) {
-    query += ' AND a.fecha BETWEEN ? AND ?';
-    params.push(fecha_inicio, fecha_fin);
+  if (date_start && date_end) {
+    query += ' AND a.date BETWEEN ? AND ?';
+    params.push(date_start, date_end);
   }
-
-  query += ' ORDER BY a.fecha DESC, t.apellido, t.nombre';
-
-  db.all(query, params, (err, records) => {
-    if (err) {
-      return res.status(500).json({ error: 'Error al obtener registros de asistencia' });
-    }
+  query += ' ORDER BY a.date DESC, t.last_name, t.first_name';
+  try {
+    const [records] = await pool.query(query, params);
     res.json(records);
-  });
+  } catch (err) {
+    res.status(500).json({ error: 'Error al obtener registros de asistencia' });
+  }
 });
 
 // Obtener asistencia por ID
-router.get('/:id', authenticateToken, (req, res) => {
-  const query = `
-    SELECT a.*, t.nombre, t.apellido, t.dni, t.especialidad
-    FROM attendance a
-    JOIN teachers t ON a.teacher_id = t.id
-    WHERE a.id = ?
-  `;
-
-  db.get(query, [req.params.id], (err, record) => {
-    if (err) {
-      return res.status(500).json({ error: 'Error al obtener registro de asistencia' });
-    }
-    if (!record) {
+router.get('/:id', authenticateToken, async (req, res) => {
+  try {
+    const [rows] = await pool.query(
+      `SELECT a.*, t.first_name, t.last_name, t.dni, t.email
+       FROM attendance a
+       JOIN teachers t ON a.teacher_id = t.id
+       WHERE a.id = ?`,
+      [req.params.id]
+    );
+    if (rows.length === 0) {
       return res.status(404).json({ error: 'Registro no encontrado' });
     }
-    res.json(record);
-  });
+    res.json(rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: 'Error al obtener registro de asistencia' });
+  }
 });
 
 // Actualizar asistencia
-router.put('/:id', authenticateToken, (req, res) => {
-  const { hora_entrada, hora_salida, estado, observaciones } = req.body;
-
-  const query = `
-    UPDATE attendance 
-    SET hora_entrada = ?, hora_salida = ?, estado = ?, observaciones = ?
-    WHERE id = ?
-  `;
-
-  db.run(query, [hora_entrada, hora_salida, estado, observaciones, req.params.id], function(err) {
-    if (err) {
-      return res.status(500).json({ error: 'Error al actualizar asistencia' });
-    }
-    if (this.changes === 0) {
+router.put('/:id', authenticateToken, async (req, res) => {
+  const { entry_time, exit_time, entry_status, exit_status, notes } = req.body;
+  try {
+    const [result] = await pool.query(
+      `UPDATE attendance
+       SET entry_time = ?, exit_time = ?, entry_status = ?, exit_status = ?, notes = ?
+       WHERE id = ?`,
+      [entry_time, exit_time, entry_status, exit_status, notes, req.params.id]
+    );
+    if (result.affectedRows === 0) {
       return res.status(404).json({ error: 'Registro no encontrado' });
     }
     res.json({ message: 'Asistencia actualizada exitosamente' });
-  });
+  } catch (err) {
+    res.status(500).json({ error: 'Error al actualizar asistencia' });
+  }
 });
 
 // Eliminar asistencia
-router.delete('/:id', authenticateToken, (req, res) => {
-  db.run('DELETE FROM attendance WHERE id = ?', [req.params.id], function(err) {
-    if (err) {
-      return res.status(500).json({ error: 'Error al eliminar asistencia' });
-    }
-    if (this.changes === 0) {
+router.delete('/:id', authenticateToken, async (req, res) => {
+  try {
+    const [result] = await pool.query(
+      'DELETE FROM attendance WHERE id = ?',
+      [req.params.id]
+    );
+    if (result.affectedRows === 0) {
       return res.status(404).json({ error: 'Registro no encontrado' });
     }
     res.json({ message: 'Asistencia eliminada exitosamente' });
-  });
+  } catch (err) {
+    res.status(500).json({ error: 'Error al eliminar asistencia' });
+  }
 });
 
 // Estadísticas de asistencia
-router.get('/stats/summary', authenticateToken, (req, res) => {
-  const { fecha_inicio, fecha_fin, teacher_id } = req.query;
-  
+router.get('/stats/summary', authenticateToken, async (req, res) => {
+  const { date_start, date_end, teacher_id } = req.query;
   let query = `
     SELECT 
-      estado,
+      entry_status as estado,
       COUNT(*) as total
     FROM attendance
     WHERE 1=1
   `;
   const params = [];
-
-  if (fecha_inicio && fecha_fin) {
-    query += ' AND fecha BETWEEN ? AND ?';
-    params.push(fecha_inicio, fecha_fin);
+  if (date_start && date_end) {
+    query += ' AND date BETWEEN ? AND ?';
+    params.push(date_start, date_end);
   }
-
   if (teacher_id) {
     query += ' AND teacher_id = ?';
     params.push(teacher_id);
   }
-
-  query += ' GROUP BY estado';
-
-  db.all(query, params, (err, stats) => {
-    if (err) {
-      return res.status(500).json({ error: 'Error al obtener estadísticas' });
-    }
+  query += ' GROUP BY entry_status';
+  try {
+    const [stats] = await pool.query(query, params);
     res.json(stats);
-  });
+  } catch (err) {
+    res.status(500).json({ error: 'Error al obtener estadísticas' });
+  }
 });
 
 module.exports = router;

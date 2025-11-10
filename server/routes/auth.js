@@ -1,13 +1,13 @@
 const express = require('express');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
-const { db } = require('../database');
+const { pool } = require('../database');
 
 const router = express.Router();
 
 // POST /api/auth/login
 // acepta { dni } o { username } o { email } + password
-router.post('/login', (req, res) => {
+router.post('/login', async (req, res) => {
   const identifier = (req.body.dni || req.body.username || req.body.email || '').toString().trim();
   const password = req.body.password;
 
@@ -15,12 +15,13 @@ router.post('/login', (req, res) => {
     return res.status(400).json({ error: 'Usuario y contraseña son requeridos' });
   }
 
-  // Buscar por dni o email en la tabla teachers
-  db.get('SELECT * FROM teachers WHERE dni = ? OR email = ? LIMIT 1', [identifier, identifier], (err, user) => {
-    if (err) {
-      return res.status(500).json({ error: 'Error en el servidor' });
-    }
-
+  try {
+    // Buscar por dni o email en la tabla teachers (MySQL)
+    const [rows] = await pool.query(
+      'SELECT * FROM teachers WHERE dni = ? OR email = ? LIMIT 1',
+      [identifier, identifier]
+    );
+    const user = rows[0];
     if (!user) {
       return res.status(401).json({ error: 'Credenciales inválidas' });
     }
@@ -59,10 +60,12 @@ router.post('/login', (req, res) => {
         first_name: user.first_name,
         last_name: user.last_name,
         email: user.email,
-        is_active: user.is_active
+        activo: user.activo // campo actualizado según tu BD
       }
     });
-  });
+  } catch (err) {
+    res.status(500).json({ error: 'Error en el servidor' });
+  }
 });
 
 module.exports = router;
