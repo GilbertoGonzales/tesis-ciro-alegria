@@ -1,3 +1,4 @@
+// ...existing code...
 import React, { useState, useEffect } from 'react';
 import { Plus, Edit2, Trash2, Search, X, QrCode } from 'lucide-react';
 import { getTeachers, createTeacher, updateTeacher, deleteTeacher } from '../services/api';
@@ -24,19 +25,27 @@ const Teachers = () => {
 
   useEffect(() => {
     loadTeachers();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
     filterTeachers();
   }, [searchTerm, teachers]);
 
+  // carga docentes (única definición)
   const loadTeachers = async () => {
+    setLoading(true);
     try {
       const response = await getTeachers();
-      setTeachers(response.data);
-      setFilteredTeachers(response.data);
-    } catch (error) {
-      console.error('Error loading teachers:', error);
+      const data = Array.isArray(response?.data) ? response.data : [];
+      setTeachers(data);
+      setFilteredTeachers(data);
+      setError('');
+    } catch (err) {
+      console.error('Error loading teachers:', err);
+      setError(err?.response?.data?.error || 'No se pudieron cargar los docentes. Revisa la consola.');
+      setTeachers([]);
+      setFilteredTeachers([]);
     } finally {
       setLoading(false);
     }
@@ -48,20 +57,34 @@ const Teachers = () => {
       return;
     }
 
-    const filtered = teachers.filter(
-      (teacher) =>
-        teacher.nombre.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        teacher.apellido.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        teacher.dni.includes(searchTerm) ||
-        (teacher.especialidad && teacher.especialidad.toLowerCase().includes(searchTerm.toLowerCase()))
-    );
+    const q = searchTerm.toString().toLowerCase();
+    const filtered = teachers.filter((teacher = {}) => {
+      const nombre = (teacher.nombre || '').toString().toLowerCase();
+      const apellido = (teacher.apellido || '').toString().toLowerCase();
+      const dni = (teacher.dni || '').toString();
+      const especialidad = (teacher.especialidad || '').toString().toLowerCase();
+      return (
+        nombre.includes(q) ||
+        apellido.includes(q) ||
+        dni.includes(searchTerm.toString()) ||
+        especialidad.includes(q)
+      );
+    });
     setFilteredTeachers(filtered);
   };
 
   const handleOpenModal = (teacher = null) => {
     if (teacher) {
       setEditingTeacher(teacher);
-      setFormData(teacher);
+      setFormData({
+        dni: teacher.dni ?? '',
+        nombre: teacher.nombre ?? '',
+        apellido: teacher.apellido ?? '',
+        email: teacher.email ?? '',
+        telefono: teacher.telefono ?? '',
+        especialidad: teacher.especialidad ?? '',
+        activo: typeof teacher.activo !== 'undefined' ? teacher.activo : 1,
+      });
     } else {
       setEditingTeacher(null);
       setFormData({
@@ -87,7 +110,7 @@ const Teachers = () => {
   // Validación: solo letras y espacios
   const handleTextOnlyChange = (field, value) => {
     const regex = /^[a-zA-ZáéíóúÁÉÍÓÚñÑ\s]*$/;
-    if (regex.test(value)) {
+    if (regex.test(value) || value === '') {
       setFormData({ ...formData, [field]: value });
     }
   };
@@ -95,7 +118,7 @@ const Teachers = () => {
   // Validación: solo números
   const handleNumberOnlyChange = (field, value) => {
     const regex = /^[0-9]*$/;
-    if (regex.test(value)) {
+    if (regex.test(value) || value === '') {
       setFormData({ ...formData, [field]: value });
     }
   };
@@ -103,28 +126,31 @@ const Teachers = () => {
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError('');
-
+    setLoading(true);
     try {
       if (editingTeacher) {
         await updateTeacher(editingTeacher.id, formData);
       } else {
         await createTeacher(formData);
       }
-      loadTeachers();
+      await loadTeachers();
       handleCloseModal();
     } catch (err) {
-      setError(err.response?.data?.error || 'Error al guardar docente');
+      console.error('Error saving teacher:', err);
+      setError(err?.response?.data?.error || 'Error al guardar docente');
+    } finally {
+      setLoading(false);
     }
   };
 
   const handleDelete = async (id) => {
-    if (window.confirm('¿Está seguro de desactivar este docente?')) {
-      try {
-        await deleteTeacher(id);
-        loadTeachers();
-      } catch (error) {
-        alert('Error al desactivar docente');
-      }
+    if (!window.confirm('¿Está seguro de desactivar este docente?')) return;
+    try {
+      await deleteTeacher(id);
+      await loadTeachers();
+    } catch (err) {
+      console.error('Error deleting teacher:', err);
+      alert('Error al desactivar docente');
     }
   };
 
@@ -341,7 +367,7 @@ const Teachers = () => {
                     <select
                       className="form-select"
                       value={formData.activo}
-                      onChange={(e) => setFormData({ ...formData, activo: parseInt(e.target.value) })}
+                      onChange={(e) => setFormData({ ...formData, activo: parseInt(e.target.value, 10) })}
                     >
                       <option value={1}>Activo</option>
                       <option value={0}>Inactivo</option>
@@ -354,7 +380,7 @@ const Teachers = () => {
                 <button type="button" className="btn btn-outline" onClick={handleCloseModal}>
                   Cancelar
                 </button>
-                <button type="submit" className="btn btn-primary">
+                <button type="submit" className="btn btn-primary" disabled={loading}>
                   {editingTeacher ? 'Actualizar' : 'Crear'}
                 </button>
               </div>
@@ -375,3 +401,4 @@ const Teachers = () => {
 };
 
 export default Teachers;
+// ...existing code...

@@ -1,75 +1,116 @@
+// ...existing code...
 const sqlite3 = require('sqlite3').verbose();
-const bcrypt = require('bcryptjs');
 const path = require('path');
 
-const dbPath = path.join(__dirname, '..', 'asistencia.db');
+let bcrypt;
+try {
+  bcrypt = require('bcrypt'); // intenta bcrypt nativo
+} catch (e) {
+  try {
+    bcrypt = require('bcryptjs'); // fallback para Windows sin compilación
+  } catch (e2) {
+    bcrypt = null;
+    console.warn('bcrypt / bcryptjs no disponibles. Las contraseñas se guardarán en texto plano temporalmente.');
+  }
+}
+
+const dbPath = path.join(__dirname, 'database.sqlite');
 const db = new sqlite3.Database(dbPath);
 
-const initialize = () => {
+function initialize() {
   return new Promise((resolve, reject) => {
     db.serialize(() => {
-      // Tabla de docentes
       db.run(`
         CREATE TABLE IF NOT EXISTS teachers (
           id INTEGER PRIMARY KEY AUTOINCREMENT,
-          dni VARCHAR(20) UNIQUE NOT NULL,
-          nombre VARCHAR(100) NOT NULL,
-          apellido VARCHAR(100) NOT NULL,
-          email VARCHAR(100) UNIQUE,
-          telefono VARCHAR(20),
-          especialidad VARCHAR(100),
-          activo BOOLEAN DEFAULT 1,
-          created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+          dni TEXT UNIQUE,
+          first_name TEXT,
+          last_name TEXT,
+          email TEXT,
+          password TEXT,
+          is_active INTEGER DEFAULT 1,
+          scheduled_start TEXT,
+          scheduled_end TEXT,
+          created_at TEXT DEFAULT (datetime('now'))
         )
-      `);
+      `, (err) => {
+        if (err) console.error('create teachers error:', err.message);
+      });
 
-      // Tabla de usuarios (admin)
-      db.run(`
-        CREATE TABLE IF NOT EXISTS users (
-          id INTEGER PRIMARY KEY AUTOINCREMENT,
-          username VARCHAR(50) UNIQUE NOT NULL,
-          password VARCHAR(255) NOT NULL,
-          role VARCHAR(20) DEFAULT 'admin',
-          created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-        )
-      `);
-
-      // Tabla de asistencias
       db.run(`
         CREATE TABLE IF NOT EXISTS attendance (
           id INTEGER PRIMARY KEY AUTOINCREMENT,
-          teacher_id INTEGER NOT NULL,
-          fecha DATE NOT NULL,
-          hora_entrada TIME,
-          hora_salida TIME,
-          estado VARCHAR(20) DEFAULT 'presente',
-          observaciones TEXT,
-          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-          FOREIGN KEY (teacher_id) REFERENCES teachers(id),
-          UNIQUE(teacher_id, fecha)
+          teacher_id INTEGER,
+          date TEXT,
+          entry_time TEXT,
+          entry_status TEXT,
+          exit_time TEXT,
+          exit_status TEXT,
+          notes TEXT,
+          created_at TEXT DEFAULT (datetime('now')),
+          FOREIGN KEY(teacher_id) REFERENCES teachers(id)
         )
       `, (err) => {
+        if (err) console.error('create attendance error:', err.message);
+      });
+
+      // seed mínimo: crear admin si no existe (dni = 'admin')
+      db.get('SELECT * FROM teachers WHERE dni = ?', ['admin'], (err, row) => {
         if (err) {
-          reject(err);
-        } else {
-          // Crear usuario admin por defecto
-          const hashedPassword = bcrypt.hashSync('admin123', 10);
-          db.run(
-            'INSERT OR IGNORE INTO users (username, password, role) VALUES (?, ?, ?)',
-            ['admin', hashedPassword, 'admin'],
-            (err) => {
-              if (err) console.log('Usuario admin ya existe');
-              console.log('Base de datos inicializada correctamente');
-              resolve();
+          console.error('DB error checking admin:', err.message);
+          return reject(err);
+        }
+        if (!row) {
+          const plainPw = 'admin123';
+          if (bcrypt) {
+            try {
+              const hashed = bcrypt.hashSync(plainPw, 10);
+              db.run(
+                `INSERT INTO teachers (dni, first_name, last_name, email, password, is_active) VALUES (?, ?, ?, ?, ?, 1)`,
+                ['admin', 'Admin', 'User', 'admin@example.com', hashed],
+                (iErr) => {
+                  if (iErr) {
+                    console.error('Error creando admin:', iErr.message);
+                    return reject(iErr);
+                  }
+                  return resolve();
+                }
+              );
+            } catch (hErr) {
+              console.error('Error hasheando contraseña admin:', hErr.message);
+              // intentar insertar en texto plano como fallback
+              db.run(
+                `INSERT INTO teachers (dni, first_name, last_name, email, password, is_active) VALUES (?, ?, ?, ?, ?, 1)`,
+                ['admin', 'Admin', 'User', 'admin@example.com', plainPw],
+                (iErr2) => {
+                  if (iErr2) return reject(iErr2);
+                  console.warn('Admin creado con contraseña en texto plano por fallback.');
+                  return resolve();
+                }
+              );
             }
-          );
+          } else {
+            db.run(
+              `INSERT INTO teachers (dni, first_name, last_name, email, password, is_active) VALUES (?, ?, ?, ?, ?, 1)`,
+              ['admin', 'Admin', 'User', 'admin@example.com', plainPw],
+              (iErr) => {
+                if (iErr) {
+                  console.error('Error creando admin (texto plano):', iErr.message);
+                  return reject(iErr);
+                }
+                console.warn('Admin creado con contraseña en texto plano.');
+                return resolve();
+              }
+            );
+          }
+        } else {
+          // admin ya existe
+          return resolve();
         }
       });
     });
   });
-};
+}
 
-module.exports = {
-  db,
-  initialize
-};
+module.exports = { db, initialize };
+// ...existing code...

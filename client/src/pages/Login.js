@@ -7,7 +7,7 @@ const Login = ({ onLogin }) => {
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
-
+// ...existing code...
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError('');
@@ -15,6 +15,9 @@ const Login = ({ onLogin }) => {
 
     try {
       const response = await login(username, password);
+      // guardar token y usuario en localStorage para que el interceptor los use
+      localStorage.setItem('token', response.data.token);
+      localStorage.setItem('user', JSON.stringify(response.data.user));
       onLogin(response.data.token, response.data.user);
     } catch (err) {
       setError(err.response?.data?.error || 'Error al iniciar sesión');
@@ -22,6 +25,7 @@ const Login = ({ onLogin }) => {
       setLoading(false);
     }
   };
+// ...existing code...
 
   return (
     <div
